@@ -4,7 +4,7 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 import time
-import os
+import hashlib
 
 class Kund:
     def __init__(self):
@@ -15,30 +15,25 @@ class Kund:
             raise ValueError("Only 'linkedin' platform is supported in this example.")
 
         options = webdriver.ChromeOptions()
-        options.add_experimental_option("detach", True)  # Keeps the browser open
+        options.add_experimental_option("detach", True)
         self.driver = webdriver.Chrome(options=options)
 
         self.driver.get("https://www.linkedin.com/login")
         print("Log in manually, then press Enter here to continue...")
-        input()  # Wait for user to manually log in
+        input()
         print("✅ Login complete")
 
     def go_to(self, url: str, wait_css: str = "body"):
-        """Navigate and wait for a CSS selector to appear."""
         self.driver.get(url)
         WebDriverWait(self.driver, 15).until(
             EC.presence_of_element_located((By.CSS_SELECTOR, wait_css))
         )
 
-    def scrape_post_comments(self, post_url: str, max_scrolls: int = 15):
-        """
-        Return a list of dicts: {author, text, timestamp}
-        Only grabs top-level comments (not replies).
-        """
+    def scrape_post_comments(self, post_url: str, batch_size=200):
         self.go_to(post_url, "article")
         print("✅ Post loaded")
 
-        # Open dropdown for comment sort order
+        # Ask user to manually select "Most recent"
         try:
             dropdown_button = WebDriverWait(self.driver, 10).until(
                 EC.element_to_be_clickable(
@@ -47,27 +42,26 @@ class Kund:
             )
             dropdown_button.click()
             print("✅ Dropdown opened")
-
             input("👋 Manually select 'Most recent' from dropdown, then press Enter to continue...\n")
         except Exception as e:
-            print("⚠️ Failed to open dropdown")
-            print("Error:", e)
+            print("⚠️ Failed to open dropdown:", e)
 
-        # Try to expand comments if collapsed
         try:
             comments_toggle = self.driver.find_element(
                 By.CSS_SELECTOR, "button[data-control-name='comments']"
             )
             comments_toggle.click()
         except Exception:
-            pass  # Already expanded or no toggle
+            pass
 
-        # Scroll to trigger comment loading
-        self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-        time.sleep(3)
+        seen_comments = set()
+        total_scraped = 0
+        batch = []
 
-        # Attempt to click "Load more comments"
-        for _ in range(60000):
+        for _ in range(6000):
+            self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+            time.sleep(2)
+
             try:
                 load_more = self.driver.find_element(
                     By.XPATH, "//button[contains(., 'Load more comments')]"
@@ -75,41 +69,46 @@ class Kund:
                 self.driver.execute_script("arguments[0].click();", load_more)
                 time.sleep(2)
             except Exception:
-                break  # No more to load
+                pass  # no more to load
 
-        # Find all comment blocks
-        comment_blocks = self.driver.find_elements(
-            By.CSS_SELECTOR, "article.comments-comment-entity"
-        )
-
-        print(f"✅ Found {len(comment_blocks)} comment blocks")
-
-        comments = []
-        for block in comment_blocks:
-            try:
-                author = block.find_element(
-                    By.CSS_SELECTOR, "span.comments-comment-meta__description-title"
-                ).text.strip()
-            except Exception:
-                author = "Unknown"
-
-            try:
-                text = block.find_element(
-                    By.CSS_SELECTOR, "span[dir='ltr']"
-                ).text.strip()
-            except Exception:
-                text = ""
-
-            try:
-                timestamp = block.find_element(
-                    By.TAG_NAME, "time"
-                ).text.strip()
-            except Exception:
-                timestamp = ""
-
-            print(f"{author} – {text[:80]}... ({timestamp})")
-            comments.append(
-                {"author": author, "text": text, "timestamp": timestamp}
+            comment_blocks = self.driver.find_elements(
+                By.CSS_SELECTOR, "article.comments-comment-entity"
             )
 
-        return comments
+            for block in comment_blocks:
+                try:
+                    author = block.find_element(
+                        By.CSS_SELECTOR, "span.comments-comment-meta__description-title"
+                    ).text.strip()
+                except Exception:
+                    author = "Unknown"
+
+                try:
+                    text = block.find_element(
+                        By.CSS_SELECTOR, "span[dir='ltr']"
+                    ).text.strip()
+                except Exception:
+                    text = ""
+
+                try:
+                    timestamp = block.find_element(
+                        By.TAG_NAME, "time"
+                    ).text.strip()
+                except Exception:
+                    timestamp = ""
+
+                uid = hashlib.sha256(f"{author}|{text}|{timestamp}".encode()).hexdigest()
+                if uid in seen_comments:
+                    continue  # skip duplicate
+
+                seen_comments.add(uid)
+                batch.append({"author": author, "text": text, "timestamp": timestamp})
+                total_scraped += 1
+                print(f"{total_scraped}. {author} – {text[:50]}... ({timestamp})")
+
+                if len(batch) >= batch_size:
+                    yield batch
+                    batch = []
+
+        if batch:
+            yield batch
