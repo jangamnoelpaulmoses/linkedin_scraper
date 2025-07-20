@@ -29,7 +29,7 @@ class Kund:
             EC.presence_of_element_located((By.CSS_SELECTOR, wait_css))
         )
 
-    def scrape_post_comments(self, post_url: str, batch_size=200):
+    def scrape_post_comments(self, post_url: str, batch_size=20):
         self.go_to(post_url, "article")
         print("✅ Post loaded")
 
@@ -102,7 +102,20 @@ class Kund:
                     continue  # skip duplicate
 
                 seen_comments.add(uid)
-                batch.append({"author": author, "text": text, "timestamp": timestamp})
+                try:
+                    subtitle = block.find_element(
+                        By.CSS_SELECTOR, "div.comments-comment-meta__description-subtitle"
+                    ).text.strip()
+                except Exception:
+                    subtitle = ""
+
+                batch.append({
+                    "author": author,
+                    "text": text,
+                    "timestamp": timestamp,
+                    "subtitle": subtitle
+                })
+
                 total_scraped += 1
                 print(f"{total_scraped}. {author} – {text[:50]}... ({timestamp})")
 
