@@ -8,7 +8,6 @@ Uses Data Kund Library
 ## Features
 
 - Extract public profile information.
-- Scrape job postings and company details.
 - Export data in CSV or JSON format.
 
 ## Requirements
